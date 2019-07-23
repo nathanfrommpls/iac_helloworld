@@ -1,6 +1,38 @@
+variable "sshkeypair" {
+  default = "id_rsa"
+}
+
+variable "ami_image" {
+  default = "ami-026c8acd92718196b" # Ubuntu 18.04 LTS on Nitro
+}
+
+variable "ec2_type" {
+  default = "t2.micro"
+}
+
+variable "myregion" {
+  default = "us-east-1"
+}
+
+variable "first_az" {
+  default = "us-east-1a"
+}
+
+variable "second_az" {
+  default = "us-east-1b"
+}
+
+variable "first_az_server_count" {
+  default = "1"
+}
+
+variable "second_az_server_count" {
+  default = "1"
+}
+
 provider "aws" {
   profile    = "default"
-  region     = "us-east-1"
+  region     = "${var.myregion}"
 }
 
 resource "aws_vpc" "helloworld" {
@@ -19,10 +51,24 @@ resource "aws_internet_gateway" "helloworld" {
   }
 }
 
-resource "aws_subnet" "helloworld" {
+resource "aws_subnet" "helloworld1" {
   vpc_id     = "${aws_vpc.helloworld.id}"
   cidr_block = "10.0.1.0/24"
   map_public_ip_on_launch = true
+  availability_zone = "${var.first_az}"
+
+  depends_on = ["aws_internet_gateway.helloworld"]
+
+  tags = {
+    Name = "helloworld"
+  }
+}
+
+resource "aws_subnet" "helloworld2" {
+  vpc_id     = "${aws_vpc.helloworld.id}"
+  cidr_block = "10.0.2.0/24"
+  map_public_ip_on_launch = true
+  availability_zone = "${var.second_az}"
 
   depends_on = ["aws_internet_gateway.helloworld"]
 
@@ -46,8 +92,13 @@ resource "aws_route" "helloworldegress" {
   depends_on                = ["aws_route_table.helloworld"]
 }
 
-resource "aws_route_table_association" "helloworld" {
-  subnet_id      = "${aws_subnet.helloworld.id}"
+resource "aws_route_table_association" "helloworld1" {
+  subnet_id      = "${aws_subnet.helloworld1.id}"
+  route_table_id = "${aws_route_table.helloworld.id}"
+}
+
+resource "aws_route_table_association" "helloworld2" {
+  subnet_id      = "${aws_subnet.helloworld2.id}"
   route_table_id = "${aws_route_table.helloworld.id}"
 }
 
@@ -89,27 +140,94 @@ resource "aws_security_group_rule" "helloworldegress" {
   security_group_id = "${aws_security_group.helloworld.id}"
 }
 
-resource "aws_instance" "helloworld" {
-  ami           = "ami-026c8acd92718196b" # Ubuntu 18.04 LTS on Nitro
-  instance_type = "t2.micro"
-  subnet_id = "${aws_subnet.helloworld.id}"
+resource "aws_instance" "helloworldfirst" {
+  count = "${var.first_az_server_count}"
+  ami           = "${var.ami_image}"
+  instance_type = "${var.ec2_type}"
+  subnet_id = "${aws_subnet.helloworld1.id}"
   vpc_security_group_ids = [ "${aws_security_group.helloworld.id}" ]
-  private_ip = "10.0.1.5"
+  private_ip = "10.0.1.${count.index+5}"
   depends_on = ["aws_internet_gateway.helloworld"]
-  key_name = "redacted"
+  key_name = "${var.sshkeypair}"
+  user_data = "${file("apachesetup.sh")}"
 
   tags = {
     Name = "helloworld"
   }
 }
 
-resource "aws_eip" "helloworld" {
+resource "aws_instance" "helloworldsecond" {
+  count = "${var.second_az_server_count}"
+  ami           = "${var.ami_image}"
+  instance_type = "${var.ec2_type}"
+  subnet_id = "${aws_subnet.helloworld2.id}"
+  vpc_security_group_ids = [ "${aws_security_group.helloworld.id}" ]
+  private_ip = "10.0.2.${count.index+5}"
+  depends_on = ["aws_internet_gateway.helloworld"]
+  key_name = "${var.sshkeypair}"
+  user_data = "${file("apachesetup.sh")}"
+
+  tags = {
+    Name = "helloworld"
+  }
+}
+
+resource "aws_eip" "helloworldfirst" {
+  count = "${var.first_az_server_count}"
   vpc = true
-  instance = "${aws_instance.helloworld.id}"
-  associate_with_private_ip = "10.0.1.5"
+  instance = "${aws_instance.helloworldfirst[count.index].id}"
+  associate_with_private_ip = "10.0.1.${count.index+5}"
   depends_on = ["aws_internet_gateway.helloworld"]
 
   tags = {
     Name = "helloworld"
   }
+}
+
+resource "aws_eip" "helloworldsecond" {
+  count = "${var.second_az_server_count}"
+  vpc = true
+  instance = "${aws_instance.helloworldsecond[count.index].id}"
+  associate_with_private_ip = "10.0.2.${count.index+5}"
+  depends_on = ["aws_internet_gateway.helloworld"]
+
+  tags = {
+    Name = "helloworld"
+  }
+}
+
+resource "aws_elb" "helloworld" {
+  name = "helloworld"
+  security_groups = [ "${aws_security_group.helloworld.id}" ]
+#  availability_zones = ["${var.first_az}", "${var.second_az}"]
+
+  listener {
+    instance_port      = 80
+    instance_protocol  = "http"
+    lb_port            = 80
+    lb_protocol        = "http"
+  }
+
+  subnets = [ "${aws_subnet.helloworld1.id}" , "${aws_subnet.helloworld2.id}"]
+
+  cross_zone_load_balancing   = true
+  idle_timeout                = 400
+  connection_draining         = true
+  connection_draining_timeout = 400
+
+  tags = {
+    Name = "helloworld"
+  }
+}
+
+resource "aws_elb_attachment" "helloworld1" {
+  count = "${var.first_az_server_count}"
+  elb      = "${aws_elb.helloworld.id}"
+  instance = "${aws_instance.helloworldfirst[count.index].id}"
+}
+
+resource "aws_elb_attachment" "helloworld2" {
+  count = "${var.second_az_server_count}"
+  elb      = "${aws_elb.helloworld.id}"
+  instance = "${aws_instance.helloworldsecond[count.index].id}"
 }
