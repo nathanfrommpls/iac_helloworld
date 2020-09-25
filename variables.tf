@@ -1,5 +1,5 @@
 variable "sshkeypair" {
-	default		= "id_rsa"
+	default		= "humeaws"
 }
 
 variable "ami_image" {
