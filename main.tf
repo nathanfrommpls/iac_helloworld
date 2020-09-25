@@ -151,17 +151,17 @@ resource "aws_eip" "helloworldfirst" {
 	}
 }
 
-resource "aws_eip" "helloworldsecond" {
-	count				= var.second_az_server_count
-	vpc				= true
-	instance			= aws_instance.helloworldsecond[count.index].id
-	associate_with_private_ip	= aws_instance.helloworldsecond[count.index].private_ip
-	depends_on			= [ aws_internet_gateway.helloworld ]
-
-	tags = {
-		Name			= "helloworld"
-	}
-}
+#resource "aws_eip" "helloworldsecond" {
+#	count				= var.second_az_server_count
+#	vpc				= true
+#	instance			= aws_instance.helloworldsecond[count.index].id
+#	associate_with_private_ip	= aws_instance.helloworldsecond[count.index].private_ip
+#	depends_on			= [ aws_internet_gateway.helloworld ]
+#
+#	tags = {
+#		Name			= "helloworld"
+#	}
+#}
 
 resource "aws_elb" "helloworld" {
 	name				= "helloworld"
